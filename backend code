@@ -1,0 +1,210 @@
+import psycopg2
+import pandas as pd
+import datetime
+
+# Database connection parameters
+DB_HOST = "localhost"
+DB_NAME = "PMS_DB"
+DB_USER = "postgres"
+DB_PASSWORD = "CDGP@68" 
+DB_PORT = "5432"
+
+# --- Mock Authentication ---
+# In a real app, this would be a session-based user object
+MOCK_MANAGER_ID = 1
+MOCK_EMPLOYEE_ID = 2
+
+def get_db_connection():
+    """Establishes and returns a database connection."""
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            port=DB_PORT
+        )
+        return conn
+    except psycopg2.Error as e:
+        print(f"Error connecting to database: {e}")
+        return None
+
+def initialize_db():
+    """Initializes mock users and a manager-employee relationship."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            # Insert a mock manager and employee
+            cur.execute("INSERT INTO users (user_id, username, role) VALUES (%s, %s, %s) ON CONFLICT (user_id) DO NOTHING;", (MOCK_MANAGER_ID, 'Jane_Manager', 'Manager'))
+            cur.execute("INSERT INTO users (user_id, username, role, manager_id) VALUES (%s, %s, %s, %s) ON CONFLICT (user_id) DO NOTHING;", (MOCK_EMPLOYEE_ID, 'John_Employee', 'Employee', MOCK_MANAGER_ID))
+            conn.commit()
+            print("Database initialized with mock users.")
+        except psycopg2.Error as e:
+            conn.rollback()
+            print(f"Error initializing users: {e}")
+        finally:
+            conn.close()
+
+# --- Goal Management ---
+def create_goal(employee_id, manager_id, description, due_date):
+    """Allows a manager to set a new goal for an employee."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO goals (employee_id, manager_id, description, due_date, status) VALUES (%s, %s, %s, %s, 'Draft');",
+                (employee_id, manager_id, description, due_date)
+            )
+            conn.commit()
+            return "Goal created successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return f"Error creating goal: {e}"
+        finally:
+            conn.close()
+    return "Database connection error."
+
+def update_goal_status(goal_id, new_status):
+    """Allows a manager to update a goal's status."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE goals SET status = %s WHERE goal_id = %s;",
+                (new_status, goal_id)
+            )
+            conn.commit()
+            return "Goal status updated successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return f"Error updating goal status: {e}"
+        finally:
+            conn.close()
+    return "Database connection error."
+
+# --- Task Management ---
+def create_task(goal_id, description):
+    """Allows an employee to create a task for a specific goal."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO tasks (goal_id, description) VALUES (%s, %s);",
+                (goal_id, description)
+            )
+            conn.commit()
+            return "Task created successfully. Awaiting manager approval."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return f"Error creating task: {e}"
+        finally:
+            conn.close()
+    return "Database connection error."
+
+def update_task_approval(task_id, is_approved):
+    """Allows a manager to approve a task."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE tasks SET is_approved = %s WHERE task_id = %s;",
+                (is_approved, task_id)
+            )
+            conn.commit()
+            return "Task approval status updated."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return f"Error updating task approval: {e}"
+        finally:
+            conn.close()
+    return "Database connection error."
+
+# --- Feedback Management ---
+def provide_feedback(goal_id, manager_id, feedback_text):
+    """Allows a manager to provide feedback on a goal."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO feedback (goal_id, manager_id, feedback_text) VALUES (%s, %s, %s);",
+                (goal_id, manager_id, feedback_text)
+            )
+            conn.commit()
+            return "Feedback submitted successfully."
+        except psycopg2.Error as e:
+            conn.rollback()
+            return f"Error submitting feedback: {e}"
+        finally:
+            conn.close()
+    return "Database connection error."
+
+# --- Reporting and Viewing Functions ---
+def get_employee_goals_and_tasks(employee_id):
+    """Returns a DataFrame of all goals and associated tasks for an employee."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            query = """
+            SELECT g.goal_id, g.description AS goal_description, g.due_date, g.status,
+                   t.task_id, t.description AS task_description, t.is_approved, t.is_completed
+            FROM goals g
+            LEFT JOIN tasks t ON g.goal_id = t.goal_id
+            WHERE g.employee_id = %s
+            ORDER BY g.due_date DESC, t.task_id ASC;
+            """
+            df = pd.read_sql_query(query, conn, params=(employee_id,))
+            return df
+        except psycopg2.Error as e:
+            print(f"Error getting goals and tasks: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+    return pd.DataFrame()
+
+def get_manager_dashboard_data(manager_id):
+    """Returns a DataFrame of all goals for a manager's direct reports."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            query = """
+            SELECT g.goal_id, u.username AS employee_name, g.description, g.due_date, g.status
+            FROM goals g
+            JOIN users u ON g.employee_id = u.user_id
+            WHERE g.manager_id = %s
+            ORDER BY g.due_date DESC;
+            """
+            df = pd.read_sql_query(query, conn, params=(manager_id,))
+            return df
+        except psycopg2.Error as e:
+            print(f"Error getting manager dashboard data: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+    return pd.DataFrame()
+
+def get_feedback_history(employee_id):
+    """Returns a DataFrame of all feedback for a specific employee."""
+    conn = get_db_connection()
+    if conn:
+        try:
+            query = """
+            SELECT f.feedback_id, g.description AS goal_description, f.feedback_text, f.created_at
+            FROM feedback f
+            JOIN goals g ON f.goal_id = g.goal_id
+            WHERE g.employee_id = %s
+            ORDER BY f.created_at DESC;
+            """
+            df = pd.read_sql_query(query, conn, params=(employee_id,))
+            return df
+        except psycopg2.Error as e:
+            print(f"Error getting feedback history: {e}")
+            return pd.DataFrame()
+        finally:
+            conn.close()
+    return pd.DataFrame()
