@@ -1,0 +1,118 @@
+import streamlit as st
+import pandas as pd
+from backend import (
+    initialize_db, create_goal, update_goal_status, create_task, update_task_approval,
+    provide_feedback, get_employee_goals_and_tasks, get_manager_dashboard_data,
+    get_feedback_history, MOCK_MANAGER_ID, MOCK_EMPLOYEE_ID
+)
+import datetime
+
+# --- Initialization ---
+initialize_db()
+
+st.set_page_config(layout="wide", page_title="Simple PMS")
+
+st.title("📈 Performance Management System")
+st.write("Maanasa|30056")
+st.markdown("Track goals, manage tasks, and provide feedback for your team.")
+
+# --- Role Selection (Mock Login) ---
+st.sidebar.header("User Role")
+user_role = st.sidebar.radio("Select your role:", ('Manager', 'Employee'))
+user_id = MOCK_MANAGER_ID if user_role == 'Manager' else MOCK_EMPLOYEE_ID
+
+st.sidebar.markdown("---")
+
+# --- Manager View ---
+if user_role == 'Manager':
+    st.header(f"👋 Welcome, Manager")
+
+    st.subheader("Set a New Goal")
+    with st.expander("Create Goal for Employee"):
+        with st.form("new_goal_form"):
+            employee_name = "John_Employee"  # Hardcoded for demo
+            employee_id = MOCK_EMPLOYEE_ID
+            goal_description = st.text_area("Goal Description", max_chars=500)
+            due_date = st.date_input("Due Date", datetime.date.today() + datetime.timedelta(days=30))
+            submitted_goal = st.form_submit_button("Set Goal")
+            if submitted_goal:
+                if goal_description:
+                    result = create_goal(employee_id, user_id, goal_description, due_date)
+                    st.success(result)
+                else:
+                    st.error("Goal description cannot be empty.")
+
+    st.subheader("Manage Employee Goals & Feedback")
+    manager_goals_df = get_manager_dashboard_data(user_id)
+
+    if not manager_goals_df.empty:
+        # Display goals with a link to feedback/status update
+        st.dataframe(manager_goals_df.rename(columns={'description': 'Goal', 'employee_name': 'Employee', 'due_date': 'Due Date', 'status': 'Status'}), use_container_width=True)
+
+        selected_goal_id = st.selectbox("Select Goal to Update or Provide Feedback", options=manager_goals_df['goal_id'].unique().tolist())
+        if selected_goal_id:
+            goal_row = manager_goals_df[manager_goals_df['goal_id'] == selected_goal_id].iloc[0]
+            st.info(f"Selected Goal for {goal_row['employee_name']}: '{goal_row['description']}'")
+
+            # Update Goal Status
+            st.subheader("Update Goal Status")
+            new_status = st.selectbox("New Status", ['Draft', 'In Progress', 'Completed', 'Cancelled'], index=['Draft', 'In Progress', 'Completed', 'Cancelled'].index(goal_row['status']))
+            if st.button("Update Status"):
+                st.success(update_goal_status(selected_goal_id, new_status))
+
+            # Provide Feedback
+            st.subheader("Provide Feedback")
+            feedback_text = st.text_area("Your feedback on this goal", max_chars=1000)
+            if st.button("Submit Feedback"):
+                if feedback_text:
+                    st.success(provide_feedback(selected_goal_id, user_id, feedback_text))
+                else:
+                    st.warning("Feedback cannot be empty.")
+    else:
+        st.info("You have no goals assigned to your employees.")
+
+
+# --- Employee View ---
+elif user_role == 'Employee':
+    st.header(f"👋 Welcome, John Employee")
+
+    st.subheader("My Goals & Tasks")
+    employee_goals_df = get_employee_goals_and_tasks(user_id)
+
+    if not employee_goals_df.empty:
+        # Group goals and display tasks under each one
+        for goal_id, goal_group in employee_goals_df.groupby('goal_id'):
+            goal = goal_group.iloc[0]
+            st.markdown(f"**Goal:** {goal['goal_description']}")
+            st.markdown(f"**Due Date:** {goal['due_date']}")
+            st.markdown(f"**Status:** `{goal['status']}`")
+
+            st.markdown("---")
+            st.subheader("My Tasks")
+            # Filter and display tasks for the current goal
+            tasks_df = goal_group[['task_id', 'task_description', 'is_approved', 'is_completed']].dropna(subset=['task_id'])
+            if not tasks_df.empty:
+                st.dataframe(
+                    tasks_df.rename(columns={'task_description': 'Description', 'is_approved': 'Approved?', 'is_completed': 'Completed?'}).set_index('task_id'),
+                    use_container_width=True
+                )
+
+            # Option to add a new task
+            with st.expander(f"Add a new task for this goal"):
+                task_description = st.text_area("Task Description", key=f"task_{goal_id}")
+                if st.button("Add Task", key=f"add_task_btn_{goal_id}"):
+                    if task_description:
+                        st.success(create_task(goal_id, task_description))
+                    else:
+                        st.warning("Task description cannot be empty.")
+            st.markdown("---")
+
+    else:
+        st.info("You have no goals assigned to you yet.")
+
+    st.subheader("My Performance History")
+    feedback_df = get_feedback_history(user_id)
+    if not feedback_df.empty:
+        st.dataframe(feedback_df, use_container_width=True)
+    else:
+        st.info("No feedback history found.")
